@@ -79,7 +79,6 @@ ui <- dashboardPage(
               fluidRow(
                 box(
                   width = 4,
-                  status = "success",
                   h4(strong("Select the time range to examine.")),
                   sliderInput("first", "Number of days after dataset start", min = 1, max = 40, value = 1),
                   sliderInput("last", "Number of days before dataset end", min = 1, max = 40, value = 1)
@@ -97,6 +96,7 @@ ui <- dashboardPage(
                 box(
                   id = "prelim_box",
                   width = 12,
+                  status = "primary",
                   plotOutput("preliminary")
                 ),
                 tags$head(tags$style('#prelim_box .box-header{ display: none}'))
@@ -105,7 +105,7 @@ ui <- dashboardPage(
                 box(
                   title = "Cropped dataset",
                   width = 12,
-                  status = "primary",
+                  status = "success",
                   DTOutput("cropped_table")
                 )
               )
@@ -158,6 +158,22 @@ ui <- dashboardPage(
                   width = 6,
                   status = "success",
                   DTOutput("mmeans_table")
+                )
+              ),
+              
+              # Hydro year means -----------------------------------------------
+              fluidRow(
+                column(
+                  width = 12,
+                  h3(strong("Hydrological year means")),
+                  h4(strong("Note:"), "Yearly means are calculated from 01 October to 30 September in the Northern Hemisphere, from 01 April to 31 March in the Southern Hemisphere.")
+                )
+              ),
+              fluidRow(
+                box(
+                  width = 12,
+                  status = "success",
+                  DTOutput("ymeans_table")
                 )
               )
       ),
@@ -240,33 +256,25 @@ ui <- dashboardPage(
                   h3(em("UNDER CONSTRUCTION"))
                 )
               ),
-              # fluidRow(
-              #   box(
-              #     width = 4,
-              #     numericInput("weqt_before", "Start (days before zero curtain)",
-              #                  value = 1,
-              #                  min = 1)
-              #   ),
-              #   box(
-              #     width = 4,
-              #     numericInput("weqt_duration", "Duration (days from start)",
-              #                  value = 1, 
-              #                  min = 1)
-              #   )
-              # ),
-              # fluidRow(
-              #   box(
-              #     title = "Period selected for WEqT computation",
-              #     width = 6,
-              #     status = "primary",
-              #     plotOutput("weqt_plot")
-              #   ),
-              #   box(
-              #     width = 6,
-              #     status = "success",
-              #     DTOutput("weqt_table")
-              #   )
-              # ),
+              fluidRow(
+                uiOutput("weqt_year"),
+                box(
+                  width = 4,
+                  numericInput("weqt_before", "Start (days before zero curtain)",
+                               value = 1,
+                               min = 1)
+                ),
+                box(
+                  width = 4,
+                  numericInput("weqt_duration", "Duration (days from start)",
+                               value = 1,
+                               min = 1)
+                )
+              ),
+              fluidRow(
+                uiOutput("weqt_plot_ui"),
+                uiOutput("weqt_table_ui")
+              ),
       ),
       tabItem(tabName = "summary", # ===========================================
               fluidRow(
@@ -303,15 +311,14 @@ ui <- dashboardPage(
                 column(
                   width = 12,
                   h3(strong("About this application")),
-                  p("This application was developed using 2021-2022 ground surface temperature data from Les Attelas VS and Les Cliosses VS. \n
-                    It is intended for use with GST data, but is essentially applicable to any temperature time series.")
+                  p("This application is intended for use with GST data, but is essentially applicable to any temperature time series.")
                 )
               ),
               fluidRow(
                 column(
                   width = 12,
                   h3(strong("Source code availability")),
-                  p("The source code of this application is made publicly available on GitHub at ", a("https://github.com/ocallaghanm/GST_parameters"), ".", br(),
+                  p("The source code of this application is made publicly available ", a(href = "https://github.com/ocallaghanm/GST_parameters", "here"), " on Github.", br(),
                     "If you prefer, the individual functions this application uses are made available in an R script you may use directly in RStudio.")
                 )
               ),
@@ -319,7 +326,7 @@ ui <- dashboardPage(
                 column(
                   width = 12,
                   h3(strong("Queries and feedback")),
-                  p("Any issues or feature requests may be reported to GitHub at ", a("https://github.com/ocallaghanm/GST_parameters/issues"),
+                  p("Any issues or feature requests may be reported ", a(href = "https://github.com/ocallaghanm/GST_parameters/issues", "to Github"),
                     "or by mail at ", a("marc.ocallaghan@bluewin.ch"), ".")
                 )
               ),
@@ -347,7 +354,7 @@ ui <- dashboardPage(
                   OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
                   ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
                   OTHER DEALINGS IN THE SOFTWARE.', br(),
-                  'For more information, please refer to ', a('http://unlicense.org/'), '.')
+                  'For more information, please refer to ', a(href = 'http://unlicense.org/'), '.')
                 )
               )
       )
@@ -447,13 +454,13 @@ server <- function(input, output, session, environment) {
   })
   
   last_data  <- reactive({
-    req(raw())
+    req(raw(), input$first, input$last)
     raw() %>% last(paste(input$last, "days"))  %>% zoo
   })
   
   # UI to crop to onsite measurements
   output$crop_box <- renderUI({
-    req(raw())
+    req(raw(), first_data(), last_data())
     step_end <- index(raw()[length(index(raw()))])
     step_start <- index(raw()[1])
     step <- difftime(step_end, step_start, units = "hours") %>% 
@@ -463,7 +470,6 @@ server <- function(input, output, session, environment) {
     
     box(
       width = 4,
-      status = "success",
       h4(strong("Select the start and end time of on-site measurements.")),
       sliderInput("onsite_start", "Start of on-site measurements",
                   min = as.POSIXct(min(index(first_data()))), 
@@ -701,7 +707,7 @@ server <- function(input, output, session, environment) {
   # Determine origin of hydrological year depending on hemisphere
   wyear_origin <- reactive({
     req(input$hemisphere)
-    ifelse(input$hemisphere == "north", "September", "March")
+    ifelse(input$hemisphere == "north", "October", "April")
   })
   
   # Negative degree days
@@ -806,12 +812,6 @@ server <- function(input, output, session, environment) {
                   choices = col_choice, 
                   multiple = FALSE)
     )
-  })
-  
-  # Reset pickers if a new dataset is uploaded
-  observeEvent(input$uploadbtn, {
-    updatePickerInput(session = session, "mean_variables", selected = NULL)
-    updatePickerInput(session = session, "param_variable", selected = NULL)
   })
   
   zero_curtain <- reactive({
@@ -951,7 +951,8 @@ server <- function(input, output, session, environment) {
   output$zc_table_ui <- renderUI({
     box(
       width = 6,
-      status = ifelse(is.null(zc_msgs$warning) & is.null(zc_msgs$error) & !all(is.na(zero_curtain())), "success", "warning"),
+      status = ifelse(is.null(zc_msgs$warning) & is.null(zc_msgs$error) & !all(is.na(zero_curtain())), 
+                      "success", "warning"),
       DTOutput("zc_table")
     )
   })
@@ -959,67 +960,121 @@ server <- function(input, output, session, environment) {
   output$zc_plot_ui <- renderUI({
     box(
       width = 6,
-      status = ifelse(is.null(zc_msgs$warning) & is.null(zc_msgs$error) & !all(is.na(zero_curtain())), "primary", "warning"),
+      status = ifelse(is.null(zc_msgs$warning) & is.null(zc_msgs$error) & !all(is.na(zero_curtain())), 
+                      "primary", "warning"),
       plotOutput("zc_plot")
     )
   })
   
-  # weqt <- reactive({
-  #   req(daily(), zero_curtain(), input$param_variable, input$weqt_before, input$weqt_duration)
-  #   
-  #   zc_start <- zero_curtain()[input$param_variable, "Start"] %>% as.Date # Find ZC start
-  #   weqt_start <- zc_start - input$weqt_before # Find WEqT start from input and ZC start
-  #   weqt_end <- weqt_start + input$weqt_duration
-  #   WEqT <- daily()[, input$param_variable] %>% 
-  #     window(start = weqt_start, end = weqt_end) %>% 
-  #     mean
-  #   data.frame(Start = weqt_start,
-  #              End   = weqt_end,
-  #              WEqT  = WEqT)
-  # })
-  # 
-  # output$weqt_table <- renderDT({
-  #   req(weqt())
-  #   weqt() %>%
-  #     datatable(class = "display nowrap")
-  # })
-  # 
-  # output$weqt_plot <- renderPlot({
-  #   req(daily(), weqt(), input$param_variable) # Plot selected
-  #   site_zoo <- daily()[, input$param_variable] %>% zoo
-  #   
-  #   par(mfrow = c(1,1), mar = c(2,4,2,4))
-  #   plot(site_zoo, 
-  #        col      = "blue", 
-  #        xlab     = "Date",
-  #        xaxt     = "n",
-  #        ylab     = "GST [°C]")
-  #   
-  #   # Rectangle to show selected dates
-  #   rect(xleft   = weqt()$Start,
-  #        ybottom = par("usr")[3],
-  #        xright  = weqt()$End,
-  #        ytop    = par("usr")[4],
-  #        col     = rgb(0.9, 0.2, 0.2, alpha = 0.2),
-  #        border  = NA)
-  #   
-  #   # Major ticks
-  #   major <- pretty(index(site_zoo))
-  #   axis.Date(side   = 1, 
-  #             x      = index(site_zoo), 
-  #             at     = major, 
-  #             labels = format(major, format = "%Y-%m"))
-  #   # Minor ticks
-  #   minor <- index(site_zoo[site_zoo %nin% major]) %>% trunc("month")
-  #   axis.Date(side   = 1, 
-  #             x      = index(site_zoo),
-  #             at     = minor, 
-  #             labels = FALSE,
-  #             tcl    = -0.3)
-  #   
-  #   grid(nx = NA, ny = NULL)
-  # })
+  output$weqt_year <- renderUI({
+    req(ndd())
+    wyears <- unique(ndd()$wyear)
+    box(
+      width = 4,
+      selectInput("weqt_yr", NULL,
+                  choices = wyears)
+    )
+  })
+  
+  # Reset pickers if a new dataset is uploaded
+  observeEvent(input$uploadbtn, {
+    updatePickerInput(session = session, "mean_variables", selected = NULL)
+    updatePickerInput(session = session, "param_variable", selected = NULL)
+    updateSelectInput(session = session, "weqt_yr", selected = NULL)
+    updateNumericInput(session = session, "weqt_before", value = 1)
+    updateNumericInput(session = session, "weqt_duration", value = 1)
+  })
+  
+  observeEvent(input$weqt_yr, {
+    updateNumericInput(session = session, "weqt_before", value = 1)
+    updateNumericInput(session = session, "weqt_duration", value = 1)
+  })
+  
+  weqt <- reactive({
+    req(daily(), zero_curtain(), input$param_variable, input$weqt_yr, input$weqt_before, input$weqt_duration)
+    validate(
+      need(is.null(zc_msgs$error) & is.null(zc_msgs$warning) & !all(is.na(zero_curtain())), 
+           "No zero curtains could be identified.")
+    )
 
+    zc_start <- zero_curtain()[paste0(input$weqt_yr, " ZC start"), input$param_variable] %>% as.Date # Find ZC start
+    weqt_start <- zc_start - input$weqt_before # Find WEqT start from input and ZC start
+    weqt_end <- weqt_start + input$weqt_duration
+    WEqT <- daily()[, input$param_variable] %>%
+      window(start = weqt_start, end = weqt_end) %>%
+      mean
+    data.frame(Start = weqt_start,
+               End   = weqt_end,
+               WEqT  = WEqT)
+  })
+
+  output$weqt_table <- renderDT({
+    req(weqt())
+    weqt() %>%
+      datatable(class = "display nowrap")
+  })
+
+  output$weqt_plot <- renderPlot({
+    req(daily(), weqt(), input$param_variable, input$weqt_yr) # Plot selected
+    
+    wyears <- water_year(index(daily()), # Compute hydrological year 
+                           origin = wyear_origin(), 
+                           as.POSIX = TRUE) %>% 
+      as.yearmon %>% trunc("year") %>% as.numeric
+    wyear_oi <- which(wyears == input$weqt_yr) # Rows corresponding to year of interest
+    site_zoo <- daily()[wyear_oi, input$param_variable] %>% zoo
+
+    par(mfrow = c(1,1), mar = c(2,4,2,4))
+    plot(site_zoo,
+         col      = "blue",
+         xlab     = "Date",
+         xaxt     = "n",
+         ylab     = "GST [°C]")
+
+    # Rectangle to show selected dates
+    rect(xleft   = weqt()$Start,
+         ybottom = par("usr")[3],
+         xright  = weqt()$End,
+         ytop    = par("usr")[4],
+         col     = rgb(0.9, 0.2, 0.2, alpha = 0.2),
+         border  = NA)
+
+    # Major ticks
+    major <- pretty(index(site_zoo))
+    axis.Date(side   = 1,
+              x      = index(site_zoo),
+              at     = major,
+              labels = format(major, format = "%Y-%m"))
+    # Minor ticks
+    minor <- index(site_zoo[site_zoo %nin% major]) %>% trunc("month")
+    axis.Date(side   = 1,
+              x      = index(site_zoo),
+              at     = minor,
+              labels = FALSE,
+              tcl    = -0.3)
+
+    grid(nx = NA, ny = NULL)
+  })
+
+  output$weqt_table_ui <- renderUI({
+    box(
+      width = 6,
+      status = ifelse(is.null(zc_msgs$warning) & is.null(zc_msgs$error) & !all(is.na(zero_curtain())), 
+                      "success", "warning"),
+      DTOutput("weqt_table")
+    )
+  })
+  
+  output$weqt_plot_ui <- renderUI({
+    box(
+      title = "Period selected for WEqT computation",
+      width = 6,
+      status = ifelse(is.null(zc_msgs$warning) & is.null(zc_msgs$error) & !all(is.na(zero_curtain())), 
+                      "primary", "warning"),
+      plotOutput("weqt_plot")
+    )
+  })
+  
   # Mean over entire timespan
   yearly <- reactive({
     yly <- site$data 
@@ -1045,6 +1100,16 @@ server <- function(input, output, session, environment) {
     yly_df
   })
   
+  output$ymeans_table <- renderDT({
+    req(yearly())
+    validate(
+      need(!all(is.na(yearly())), "Annual means could not be computed because of missing data.")
+    )
+    yearly() %>%
+      column_to_rownames(var = "wyear") %>%
+      datatable(options = list(scrollX = TRUE), class = "display nowrap")
+  })
+  
   # downloadHandler for daily means
   output$daily_dl <- downloadHandler(
     filename = function() {
@@ -1060,9 +1125,9 @@ server <- function(input, output, session, environment) {
   var_summary <- reactive({
     req(monthly(), yearly())
     mly_rnames <- paste(as.character(index(monthly())), "mean GST", sep = " ")
-    yly_rnames <- paste(as.character(yearly()$wyear), "mean GST", sep = " ")
-    ndd_rnames <- paste(as.character(ndd_total()$`Hydrological year`), "NDD", sep = " ")
-    pdd_rnames <- paste(as.character(pdd_total()$`Hydrological year`), "PDD", sep = " ")
+    yly_rnames <- paste(as.character(yearly()$wyear - 1) , "-", as.character(yearly()$wyear), "mean GST", sep = " ")
+    ndd_rnames <- paste(as.character(ndd_total()$`Hydrological year` - 1), "-", as.character(ndd_total()$`Hydrological year`), "NDD", sep = " ")
+    pdd_rnames <- paste(as.character(pdd_total()$`Hydrological year` - 1), "-", as.character(pdd_total()$`Hydrological year`), "PDD", sep = " ")
     df_yly <- yearly() %>%
       select(-wyear) %>%
       as.data.frame(check.names = FALSE) %>%
