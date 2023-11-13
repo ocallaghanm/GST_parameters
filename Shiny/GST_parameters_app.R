@@ -252,8 +252,7 @@ ui <- dashboardPage(
                 column(
                   width = 12,
                   h3(strong("Winter equilibrium temperature")),
-                  #h4(strong("Caution:"), "Not displayed in variable summary as the computation period must be selected manually.")¨
-                  h3(em("UNDER CONSTRUCTION"))
+                  h4(strong("Caution:"), "Not displayed in variable summary as the computation period must be selected manually.")
                 )
               ),
               fluidRow(
@@ -377,20 +376,21 @@ server <- function(input, output, session, environment) {
     
     # Read in data as zoo object then convert to xts
     tryCatch(
-      expr = read.table.zoo(file    = input$fname$datapath,
-                             sep    = input$separator,
-                             skip   = input$skip,
-                             header = input$header,
-                             dec    = input$decimal,
-                             index.column = 1,
-                             drop = FALSE,
-                             blank.lines.skip = TRUE,
-                             strip.white = TRUE,
-                             check.names = FALSE,
-                             na.strings = c("NA", "N/A", "NAN", "", "#N/A", "na", "nan", "NaN"),
-                             FUN = as.POSIXct,
-                             tz = "UTC", # Workaround for as.yearmon(), which converts all datetimes to UTC. Should not have any incidence on data as there is only one site processed at a time.
-                             format = input$format) %>% as.xts(check.names = FALSE),
+      expr = read.table(file   = input$fname$datapath,
+                        sep    = input$separator,
+                        skip   = input$skip,
+                        header = input$header,
+                        dec    = input$decimal,
+                        blank.lines.skip = TRUE,
+                        strip.white = TRUE,
+                        check.names = FALSE,
+                        na.strings = c("NA", "N/A", "NAN", "", "#N/A", "na", "nan", "NaN")) %>% 
+        dplyr::filter(rowSums(is.na(.)) != ncol(.)) %>%
+        read.zoo(FUN    = as.POSIXct,
+                 tz     = "UTC", # Workaround for as.yearmon(), which converts all datetimes to UTC. Should not have any incidence on data as there is only one site processed at a time.
+                 format = input$format,
+                 drop   = FALSE) %>%
+        as.xts(check.names = FALSE),
       error = function(err) {
         showNotification(paste0("Error: ", err$message), duration = 20, type = "error")
         return(data.frame())
@@ -420,7 +420,8 @@ server <- function(input, output, session, environment) {
             strong("3."), "Metadata or other text not fitting your data format - if they are located at the head of the document, you can ", strong("skip"), "them with the ", 
             em("Rows to skip"), " input.", br(),
             strong("4."), "Wrong ", strong("separator"), "- please check the selected separator character;", br(),
-            strong("5."), "Your data may contain ", strong("non-Unicode white spaces or a typo in the index"), "- check the error notification to find the rows causing the error.")
+            strong("5."), "Your data may contain ", strong("non-Unicode white spaces or a typo in the index"), "- check the error notification to find the rows causing the error.", br(),
+            strong("6."), "One or more of your", strong("timestamps"), "may be duplicated. Check all of your timestamps are", strong("unique."))
     } 
   })
   
@@ -1106,6 +1107,7 @@ server <- function(input, output, session, environment) {
       need(!all(is.na(yearly())), "Annual means could not be computed because of missing data.")
     )
     yearly() %>%
+      remove_rownames() %>%
       column_to_rownames(var = "wyear") %>%
       datatable(options = list(scrollX = TRUE), class = "display nowrap")
   })
