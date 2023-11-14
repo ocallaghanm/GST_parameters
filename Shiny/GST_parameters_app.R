@@ -184,11 +184,15 @@ ui <- dashboardPage(
               fluidRow(
                 column(
                   width = 3,
-                  h4(strong("Ignore NAs"), "(Caution: Displayed \"final\" degree-day values may be inaccurate if the hydrological year is incomplete.)")
+                  h4(strong("Ignore NAs"), 
+                     "(Caution: Displayed \"final\" degree-day values may be inaccurate if the hydrological year is incomplete.)")
                 ),
                 column(
                   width = 9,
-                  checkboxInput("degdays_ignoreNA", label = NULL, value = FALSE)
+                  radioButtons("degdays_ignoreNA", label = "", 
+                               choices = c("No"   = 0,
+                                           "Yes"  = 1),
+                               inline = TRUE)
                 )
               ),
               
@@ -585,6 +589,7 @@ server <- function(input, output, session, environment) {
     updateSliderInput(session = session, "last", value = 1)
     updateSliderInput(session = session, "onsite_start", value = as.POSIXct(min(index(first_data()))))
     updateSliderInput(session = session, "onsite_end", value = as.POSIXct(max(index(last_data()))))
+    updateRadioButtons(session = session, "degdays_ignoreNA", selected = 0)
   })
   
   # Check if dataset was cropped, else use raw
@@ -755,7 +760,7 @@ server <- function(input, output, session, environment) {
   # Find final NDD values
   ndd_total <- reactive({
     req(ndd(), input$degdays_ignoreNA)
-    if (input$degdays_ignoreNA == FALSE) {
+    if (input$degdays_ignoreNA == 0) {
       ndd() %>% 
         select(-Date) %>% 
         summarise(across(everything(), min)) %>%
@@ -809,7 +814,7 @@ server <- function(input, output, session, environment) {
   # Find final PDD values
   pdd_total <- reactive({
     req(pdd(), input$degdays_ignoreNA)
-    if (input$degdays_ignoreNA == FALSE) {
+    if (input$degdays_ignoreNA == 0) {
       pdd() %>% 
         select(-Date) %>% 
         summarise(across(everything(), max)) %>%
