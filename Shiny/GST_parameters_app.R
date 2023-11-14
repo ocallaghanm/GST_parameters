@@ -180,6 +180,18 @@ ui <- dashboardPage(
       
       tabItem(tabName = "degdays", # ===========================================
               
+              # Ignore NAs -----------------------------------------------------
+              fluidRow(
+                column(
+                  width = 3,
+                  h4(strong("Ignore NAs"), "(Caution: Displayed \"final\" degree-day values may be inaccurate if the hydrological year is incomplete.)")
+                ),
+                column(
+                  width = 9,
+                  checkboxInput("degdays_ignoreNA", label = NULL, value = FALSE)
+                )
+              ),
+              
               # NDD ------------------------------------------------------------
               fluidRow(
                 column(
@@ -742,13 +754,22 @@ server <- function(input, output, session, environment) {
   
   # Find final NDD values
   ndd_total <- reactive({
-    req(ndd()) 
-    ndd() %>% 
-      select(-Date) %>% 
-      summarise(across(everything(), min)) %>%
-      relocate(wyear) %>%
-      rename("Hydrological year" = wyear) %>%
-      ungroup
+    req(ndd(), input$degdays_ignoreNA)
+    if (input$degdays_ignoreNA == FALSE) {
+      ndd() %>% 
+        select(-Date) %>% 
+        summarise(across(everything(), min)) %>%
+        relocate(wyear) %>%
+        rename("Hydrological year" = wyear) %>%
+        ungroup
+    } else {
+      ndd() %>% 
+        select(-Date) %>% 
+        summarise(across(everything(), \(x) min(x, na.rm = TRUE))) %>%
+        relocate(wyear) %>%
+        rename("Hydrological year" = wyear) %>%
+        ungroup
+    }
   })
   
   output$ndd_totals <- renderDT({
@@ -787,13 +808,22 @@ server <- function(input, output, session, environment) {
   
   # Find final PDD values
   pdd_total <- reactive({
-    req(pdd())
-    pdd() %>% 
-      select(-Date) %>% 
-      summarise(across(everything(), max)) %>%
-      relocate(wyear) %>%
-      rename("Hydrological year" = wyear) %>%
-      ungroup
+    req(pdd(), input$degdays_ignoreNA)
+    if (input$degdays_ignoreNA == FALSE) {
+      pdd() %>% 
+        select(-Date) %>% 
+        summarise(across(everything(), max)) %>%
+        relocate(wyear) %>%
+        rename("Hydrological year" = wyear) %>%
+        ungroup
+    } else {
+      pdd() %>% 
+        select(-Date) %>% 
+        summarise(across(everything(), \(x) max(x, na.rm = TRUE))) %>%
+        relocate(wyear) %>%
+        rename("Hydrological year" = wyear) %>%
+        ungroup
+    }
   })
   
   output$pdd_totals <- renderDT({
