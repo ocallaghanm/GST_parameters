@@ -57,7 +57,20 @@ ui <- dashboardPage(
                   numericInput("skip", "Rows to skip", 0, min = 0),
                   checkboxInput("header", "Column headers", TRUE),
                   textInput("decimal", "Decimal marker", "."),
-                  textInput("format", "Date-time format (POSIXct)", "%d.%m.%y %H:%M"),
+                  selectInput("format", "Date-time format (POSIXct)", choices = list(
+                    "31.01.2024 18:00" = "%d.%m.%Y %H:%M",
+                    "31.01.24 18:00" = "%d.%m.%y %H:%M",
+                    "31/01/2024 18:00" = "%d/%m/%Y %H:%M",
+                    "31/01/24 18:00" = "%d/%m/%y %H:%M",
+                    "2024-01-31 18:00" = "%Y-%m-%d %H:%M",
+                    "2024.01.31 18:00" = "%Y.%m.%d %H:%M",
+                    "31.01.2024" = "%d.%m.%Y",
+                    "31/01/2024" = "%d/%m/%Y",
+                    "2024-01-31" = "%Y-%m-%d",
+                    "2024.01.31" = "%Y.%m.%d",
+                    "Other" = "Other"
+                  )),
+                  uiOutput("format_text"),
                   uiOutput("posix_link"),br(),
                   radioButtons("hemisphere", "Location of your study area",
                                choices = c("Northern hemisphere" = "north",
@@ -386,9 +399,17 @@ server <- function(input, output, session, environment) {
               target = "_blank"))
   })
   
+  output$format_text <- renderUI({
+    if (!input$format == "Other") return(NULL) else {
+      textInput("format_custom", "Type date-time format here:")
+    }
+  })
+  
   # Upload raw data
   raw <- bindEvent(reactive({ 
-    req(input$fname, input$separator, input$skip, input$decimal, input$format)
+    req(input$fname, input$separator, input$skip, input$decimal)
+    
+    fmt <- ifelse(input$format != "Other", input$format, input$format_custom)
     
     # Read in data as zoo object then convert to xts
     tryCatch(
@@ -404,12 +425,18 @@ server <- function(input, output, session, environment) {
         dplyr::filter(rowSums(is.na(.)) != ncol(.)) %>%
         read.zoo(FUN    = as.POSIXct,
                  tz     = "UTC", # Workaround for as.yearmon(), which converts all datetimes to UTC. Should not have any incidence on data as there is only one site processed at a time.
-                 format = input$format,
+                 format = fmt,
                  drop   = FALSE) %>%
         as.xts(check.names = FALSE),
       error = function(err) {
-        showNotification(paste0("Error: ", err$message), duration = 20, type = "error")
-        return(data.frame())
+        if (startsWith(err$message, "index has")) { # Cater for errors triggered by invalid as.POSIXct.
+          showNotification("Error: Invalid date-time format.", duration = 20, type = "error")
+          return(data.frame())
+        }
+        else {
+          showNotification(paste0("Error: ", err$message), duration = 20, type = "error")
+          return(data.frame())
+        }
       },
       warning = function(warn) {
         showNotification(paste0("Warning: ", warn$message), duration = 20, type = "warning")
