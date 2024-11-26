@@ -1,6 +1,7 @@
 if (!require("shiny")) {install.packages("shiny")}; (library("shiny")) # For the user interface
 if (!require("shinyWidgets")) {install.packages("shinyWidgets")}; library("shinyWidgets")
 if (!require("shinydashboard")) {install.packages("shinydashboard")}; library("shinydashboard")
+if (!require("shinyjs")) {install.packages("shinyjs")}; library("shinyjs")
 if (!require("tidyverse")) {install.packages("tidyverse")}; library("tidyverse") # Data processing
 if (!require("magrittr")) {install.packages("magrittr")}; library("magrittr")
 if (!require("accelerometry")) {install.packages("accelerometry")}; library("accelerometry")
@@ -33,6 +34,7 @@ ui <- dashboardPage(
       left: 75px !important;
     }"
     )),
+    useShinyjs(),
     tabItems(
       tabItem(tabName = "upload", # ============================================
               fluidRow(
@@ -49,15 +51,7 @@ ui <- dashboardPage(
                   solidHeader = FALSE,
                   width = 5,
                   fileInput("fname", "Data", buttonLabel = "Browse..."),
-                  radioButtons("separator", "Separator:", choices = c("Tab"   = "\t",
-                                                                      ","     = ",",
-                                                                      ";"     = ";",
-                                                                      "|"     = "|",
-                                                                      "Space" = " ")),
-                  numericInput("skip", "Rows to skip", 0, min = 0),
-                  checkboxInput("header", "Column headers", TRUE),
-                  textInput("decimal", "Decimal marker", "."),
-                  selectInput("format", "Date-time format (POSIXct)", choices = list(
+                  selectInput("format", "Input date-time format (POSIXct)", choices = list(
                     "31.01.2024 18:00" = "%d.%m.%Y %H:%M",
                     "31.01.24 18:00" = "%d.%m.%y %H:%M",
                     "31/01/2024 18:00" = "%d/%m/%Y %H:%M",
@@ -72,13 +66,30 @@ ui <- dashboardPage(
                   )),
                   uiOutput("format_text"),
                   uiOutput("posix_link"),br(),
-                  radioButtons("hemisphere", "Location of your study area",
-                               choices = c("Northern hemisphere" = "north",
-                                           "Southern hemisphere" = "south")),
+                  actionButton("toggle_advanced", "Advanced Settings"),
+                  hidden(
+                    radioButtons("separator", "Separator:", choices = c("Tab"   = "\t",
+                                                                        ","     = ",",
+                                                                        ";"     = ";",
+                                                                        "|"     = "|",
+                                                                        "Space" = " ")),
+                    numericInput("skip", "Rows to skip", 0, min = 0),
+                    checkboxInput("header", "Column headers", TRUE),
+                    textInput("decimal", "Decimal marker", "."),
+                    selectInput("format_output", "Output date-time format", choices = list(
+                      "31.01.2024 18:00" = "Dots",
+                      "31/01/2024 18:00" = "Slashes",
+                      "2024-01-31 18:00 (ISO 8601)" = "ISO8601"
+                    )),
+                    radioButtons("hemisphere", "Location of your study area",
+                                 choices = c("Northern hemisphere" = "north",
+                                             "Southern hemisphere" = "south"))
+                    ),
                   actionButton("uploadbtn", "Upload", style = "position: absolute; right: 10px; bottom: 5px")
                 ),
                 uiOutput("raw_box")
               )
+              
       ),
       tabItem(tabName = "crop", # ==============================================
               fluidRow(
@@ -346,9 +357,7 @@ ui <- dashboardPage(
                 column(
                   width = 12,
                   h3(strong("Source code availability")),
-                  p("The source code of this application is made publicly available ", a(href = "https://github.com/ocallaghanm/GST_parameters", "here"), " on Github.", br(),
-                    "If you prefer, the individual functions this application uses are made available in an R script you may use directly in RStudio.")
-                )
+                  p("The source code of this application is made publicly available ", a(href = "https://github.com/ocallaghanm/GST_parameters", "here"), " on Github.")
               ),
               fluidRow(
                 column(
@@ -388,7 +397,7 @@ ui <- dashboardPage(
       )
     )
   )
-)
+))
 
 # SERVER #######################################################################
 server <- function(input, output, session, environment) { 
@@ -405,6 +414,14 @@ server <- function(input, output, session, environment) {
     }
   })
   
+  observeEvent(input$toggle_advanced, {
+    toggle("separator")
+    toggle("skip")
+    toggle("decimal")
+    toggle("format_output")
+    toggle("hemisphere")
+  })
+  
   # Upload raw data
   raw <- bindEvent(reactive({ 
     req(input$fname, input$separator, input$skip, input$decimal)
@@ -412,24 +429,34 @@ server <- function(input, output, session, environment) {
     fmt <- ifelse(input$format != "Other", input$format, input$format_custom)
     
     # Read in data as zoo object then convert to xts
-    tryCatch(
-      expr = read.table(file   = input$fname$datapath,
-                        sep    = input$separator,
-                        skip   = input$skip,
-                        header = input$header,
-                        dec    = input$decimal,
-                        blank.lines.skip = TRUE,
-                        strip.white = TRUE,
-                        check.names = FALSE,
-                        na.strings = c("NA", "N/A", "NAN", "", "#N/A", "na", "nan", "NaN")) %>% 
-        dplyr::filter(rowSums(is.na(.)) != ncol(.)) %>%
-        read.zoo(FUN    = as.POSIXct,
-                 tz     = "UTC", # Workaround for as.yearmon(), which converts all datetimes to UTC. Should not have any incidence on data as there is only one site processed at a time.
-                 format = fmt,
-                 drop   = FALSE) %>%
-        as.xts(check.names = FALSE),
+    rawdata <- tryCatch(
+      expr = {dat <- read.table(file   = input$fname$datapath,
+                                sep    = input$separator,
+                                skip   = input$skip,
+                                header = input$header,
+                                dec    = input$decimal,
+                                blank.lines.skip = TRUE,
+                                strip.white = TRUE,
+                                check.names = FALSE,
+                                na.strings = c("NA", "N/A", "NAN", "", "#N/A", "na", "nan", "NaN")) %>% 
+        dplyr::filter(rowSums(is.na(.)) != ncol(.))
+      dat.zoo <- read.zoo(dat,
+                          FUN    = as.POSIXct,
+                          tz     = "UTC", # Workaround for as.yearmon(), which converts all datetimes to UTC. Should not have any incidence on data as there is only one site processed at a time.
+                          format = fmt,
+                          drop   = FALSE)
+      if (lubridate::year(dat.zoo[1,]) < 1800 && fmt == "%d.%m.%Y %H:%M") {
+        dat.zoo <- read.zoo(dat,
+                            FUN = as.POSIXct,
+                            tz = "UTC",
+                            format = "%d.%m.%y %H:%M",
+                            drop = FALSE)
+        }
+      dat.xts <- as.xts(dat.zoo, check.names = FALSE)
+      return(dat.xts)
+            },
       error = function(err) {
-        if (startsWith(err$message, "index has")) { # Cater for errors triggered by invalid as.POSIXct.
+        if (startsWith(err$message, "index has")) { # Cater for errors triggered by invalid as.POSIXct() input.
           showNotification("Error: Invalid date-time format.", duration = 20, type = "error")
           return(data.frame())
         }
@@ -446,15 +473,47 @@ server <- function(input, output, session, environment) {
   input$uploadbtn
   ) 
   
+  # Store date-time format values
+  format_dates <- reactiveValues(DateTime = NULL,
+                                 DateOnly = NULL,
+                                 MonthOnly = NULL) 
+  
+  # Update date-time format values
+  observe({
+    req(input$format_output, format_dates)
+    
+    if (input$format_output == "Dots") {
+      format_dates$DateTime = "%d.%m.%Y %H:%M"
+      format_dates$DateOnly = "%d.%m.%Y"
+      format_dates$MonthOnly = "%b %Y"
+    } else if (input$format_output == "Slashes") {
+      format_dates$DateTime = "%d/%m/%Y %H:%M"
+      format_dates$DateOnly = "%d/%m/%Y"
+      format_dates$MonthOnly = "%b %Y"
+    } else if (input$format_output == "ISO8601") {
+      format_dates$DateTime = "%F %R"
+      format_dates$DateOnly = "%F"
+      format_dates$MonthOnly = "%Y-%m"
+    }
+  })
+  
   output$warn_raw_na <- renderText({
-    if(anyNA(raw())) {
+    if (nrow(raw()) != 0 && anyNA(raw()) && !any(.indexyear(raw()) + 1900 < 1800)) {
       nacount <- raw() %>% is.na %>% sum
       paste(strong("Warning: "), "This dataset contains", nacount, 
             "missing values.",
             br(),
-            "They will be ignored in following steps.", br(),
-            "If you wish to fill them in, consider na.approx() to interpolate them or na.locf() to carry the previous observation forward. ")
-    } else if(nrow(raw()) == 0) {
+            "They will be ignored in following steps.")
+    } else if (nrow(raw()) != 0 && any(.indexyear(raw()) + 1900 < 1800) && anyNA(raw())) { # Warn if year might be wrong, e.g. 0023 instead of 2023.
+      nacount <- raw() %>% is.na %>% sum
+      paste(strong("Warning: Year is very small."), "Check your date-time format.", br(),
+            strong("Additionally: "), "This dataset contains", nacount, 
+            "missing values.",
+            br(),
+            "They will be ignored in following steps.")
+    } else if (nrow(raw()) != 0 && any(.indexyear(raw()) + 1900 < 1800)) { # Same with NAs.
+      paste(strong("Warning: Year is very small."), "Check your date-time format.")
+    } else if (nrow(raw()) == 0) {
       paste(strong("Warning: "), "It seems there was a problem with your upload.",
             br(),
             "This may be due to:", br(),
@@ -469,8 +528,12 @@ server <- function(input, output, session, environment) {
   })
   
   output$raw_table <- renderDT({
-    req(raw())
-    datatable(as.data.frame(raw()), options = list(scrollX = TRUE), class = "display nowrap")
+    req(raw(), format_dates)
+    raw_df <- as.data.frame(raw())
+    rownames(raw_df) <- rownames(raw_df) %>% 
+      as.POSIXct(tz = "UTC") %>% # Repeat UTC to avoid shift
+      format(tz = "UTC", format = format_dates$DateTime) # Set to requested format
+    datatable(raw_df, options = list(scrollX = TRUE), class = "display nowrap")
   })
   
   raw_status <- reactive({
@@ -478,7 +541,7 @@ server <- function(input, output, session, environment) {
   })
   
   output$raw_box <- renderUI({
-    req(raw_status())
+    req(raw_status(), input$format_output)
     status <- raw_status()
     
     box(
@@ -504,7 +567,7 @@ server <- function(input, output, session, environment) {
   
   # UI to crop to onsite measurements
   output$crop_box <- renderUI({
-    req(raw(), first_data(), last_data())
+    req(raw(), first_data(), last_data(), format_dates)
     step_end <- index(raw()[length(index(raw()))])
     step_start <- index(raw()[1])
     step <- difftime(step_end, step_start, units = "hours") %>% 
@@ -512,28 +575,30 @@ server <- function(input, output, session, environment) {
       round
     step %<>% as.double(units = "secs") %>% round(-2)
     
-    box(
-      width = 4,
-      h4(strong("Select the start and end time of on-site measurements.")),
-      sliderInput("onsite_start", "Start of on-site measurements",
-                  min = as.POSIXct(min(index(first_data()))), 
-                  max = as.POSIXct(max(index(first_data()))),
-                  value = min(index(first_data())),
-                  timeFormat = "%F %R",
-                  step = step),
-      sliderInput("onsite_end", "End of on-site measurements", 
-                  min = as.POSIXct(min(index(last_data()))), 
-                  max = as.POSIXct(max(index(last_data()))),
-                  value = max(index(last_data())),
-                  timeFormat = "%F %R",
-                  step = step)
-    )
+    suppressWarnings({
+      box(
+        width = 4,
+        h4(strong("Select the start and end time of on-site measurements.")),
+        sliderInput("onsite_start", "Start of on-site measurements",
+                    min = as.POSIXct(min(index(first_data()))), 
+                    max = as.POSIXct(max(index(first_data()))),
+                    value = min(index(first_data())),
+                    timeFormat = format_dates$DateTime,
+                    step = step),
+        sliderInput("onsite_end", "End of on-site measurements", 
+                    min = as.POSIXct(min(index(last_data()))), 
+                    max = as.POSIXct(max(index(last_data()))),
+                    value = max(index(last_data())),
+                    timeFormat = format_dates$DateTime,
+                    step = step)
+      )
+    })
   })
   
   # Plot first and last section to find where to crop
   output$preliminary <- renderPlot({
     
-    req(first_data(), last_data(), input$onsite_start, input$onsite_end)
+    req(first_data(), last_data(), input$onsite_start, input$onsite_end, format_dates)
     
     layout(matrix(c(1,2), 2, 2, byrow = TRUE), widths = c(5, 5))
     par(mar = c(2,4,2,4)) # Plot margins
@@ -551,7 +616,7 @@ server <- function(input, output, session, environment) {
     raw_start_ticks <- axis.POSIXct(side  = 1,
                                     x     = index(first_data()),
                                     at    = pretty(index(first_data())),
-                                    labels = format(pretty(index(first_data())), format = "%Y-%m-%d"),
+                                    labels = format(pretty(index(first_data())), format = format_dates$DateOnly),
                                     cex = 1.2)
     raw_start_ticks
     abline(v = raw_start_ticks, col = "lightgray")
@@ -570,7 +635,7 @@ server <- function(input, output, session, environment) {
     raw_end_ticks <- axis.POSIXct(side  = 1,
                                   x      = index(last_data()),
                                   at     = pretty(index(last_data())),
-                                  labels = format(pretty(index(last_data())), format = "%Y-%m-%d"),
+                                  labels = format(pretty(index(last_data())), format = format_dates$DateOnly),
                                   cex = 1.2)
     raw_end_ticks
     abline(v = raw_end_ticks, col = "lightgray")
@@ -614,8 +679,8 @@ server <- function(input, output, session, environment) {
     zc_msgs$warning <- NULL
     updateSliderInput(session = session, "first", value = 1)
     updateSliderInput(session = session, "last", value = 1)
-    updateSliderInput(session = session, "onsite_start", value = as.POSIXct(min(index(first_data()))))
-    updateSliderInput(session = session, "onsite_end", value = as.POSIXct(max(index(last_data()))))
+    suppressWarnings(updateSliderInput(session = session, "onsite_start", value = as.POSIXct(min(index(first_data())))))
+    suppressWarnings(updateSliderInput(session = session, "onsite_end", value = as.POSIXct(max(index(last_data())))))
     updateRadioButtons(session = session, "degdays_ignoreNA", selected = 0)
   })
   
@@ -669,9 +734,11 @@ server <- function(input, output, session, environment) {
   })  
   
   output$dmeans_table <- renderDT({
-    req(daily())
-    daily() %>%
-      as.data.frame(check.names = FALSE) %>%
+    req(daily(), format_dates)
+    dly_for_tbl <- daily() %>%
+      as.data.frame(check.names = FALSE)
+    rownames(dly_for_tbl) <- index(daily()) %>% format(format_dates$DateOnly) %>% as.character
+    dly_for_tbl  %>%
       datatable(options = list(scrollX = TRUE), class = "display nowrap")
   })
   
@@ -723,9 +790,11 @@ server <- function(input, output, session, environment) {
   })  
   
   output$mmeans_table <- renderDT({
-    req(monthly())
-    monthly() %>%
-      as.data.frame(check.names = FALSE) %>%
+    req(monthly(), format_dates)
+    mly_for_tbl <- monthly() %>%
+      as.data.frame(check.names = FALSE)
+    rownames(mly_for_tbl) <- index(monthly()) %>% format(format_dates$MonthOnly) %>% as.character
+    mly_for_tbl  %>%
       datatable(options = list(scrollX = TRUE), class = "display nowrap")
   })
   
@@ -775,12 +844,14 @@ server <- function(input, output, session, environment) {
   })
   
   output$ndd_table <- renderDT({
-    req(ndd())
-    ndd() %>%
+    req(ndd(), format_dates)
+    ndd_for_tbl <- ndd() %>%
       ungroup %>%
       select(-wyear) %>%
       as.xts(check.names = FALSE) %>%
-      as.data.frame(check.names = FALSE) %>%
+      as.data.frame(check.names = FALSE)
+    rownames(ndd_for_tbl) <- ndd()$Date %>% format(format_dates$DateOnly) %>% as.character
+    ndd_for_tbl %>%
       datatable(options = list(scrollX = TRUE), class = "display nowrap")
   })
   
@@ -826,15 +897,18 @@ server <- function(input, output, session, environment) {
       filter(n() >= 100) %>%
       mutate(across(-Date, cumsum)) %>%
       mutate(across(-Date, ~ round(.x, digits = 1)))
+    PDD_df
   })
   
   output$pdd_table <- renderDT({
-    req(pdd())
-    pdd() %>%
+    req(pdd(), format_dates)
+    pdd_for_tbl <- pdd() %>%
       ungroup %>%
       select(-wyear) %>%
       as.xts(check.names = FALSE) %>%
-      as.data.frame(check.names = FALSE) %>%
+      as.data.frame(check.names = FALSE) 
+    rownames(pdd_for_tbl) <- pdd()$Date %>% format(format_dates$DateOnly) %>% as.character
+    pdd_for_tbl %>%
       datatable(options = list(scrollX = TRUE), class = "display nowrap")
   })
   
@@ -878,7 +952,7 @@ server <- function(input, output, session, environment) {
   })
   
   zero_curtain <- reactive({
-    req(daily())
+    req(daily(), format_dates)
     for_zc <- daily()
     wyear <- water_year(index(for_zc), # Compute hydrological year 
                                origin = wyear_origin(), 
@@ -895,14 +969,15 @@ server <- function(input, output, session, environment) {
     zc_list <- tryCatch(expr = {
       lapply(forzc_df_list, FUN = function(x) {
         apply(x[!names(x) %in% c("wyear", "Date")], 2, FUN = function(y, wname = unique(x$wyear), dates = x$Date) {
+          dts <- dates %>% format(format_dates$DateOnly)
           zcs <- rle2(y == 0, indices = TRUE) %>% 
             unclass %>% 
             data.frame(check.names = FALSE) %>%
             filter(value == 1) %>% # Where T.C is 0
             filter(length == max(length)) %>%
             filter(length > 10) %>%
-            mutate(start = dates[start], # Get dates
-                   stop  = dates[stop]) %>%
+            mutate(start = dts[start], # Get dates
+                   stop  = dts[stop]) %>%
             select(-value) %>%
             dplyr::rename("{wname} ZC start"    := start,
                           "{wname} ZC end"      := stop,
@@ -941,7 +1016,7 @@ server <- function(input, output, session, environment) {
   })
   
   output$zc_plot <- renderPlot({
-    req(daily(), zero_curtain(), input$param_variable) # Plot selected
+    req(daily(), zero_curtain(), input$param_variable, format_dates) # Plot selected
     validate(
       need(!is.null(input$param_variable), "Select a variable to display.")
     )
@@ -955,18 +1030,16 @@ server <- function(input, output, session, environment) {
     site_zoo <- daily()[, pltvar] %>% zoo
     startdates <- zero_curtain() %>% 
       select({pltvar}) %>%
-      mutate(across(everything(), as.Date)) %>%
       rownames_to_column(var = "rname") %>% 
       filter(str_detect(rname, "start")) %>% 
       column_to_rownames(var = "rname") %>%
-      as.vector %>% unname %>% unlist %>% as.Date
+      as.vector %>% unname %>% unlist %>% as.Date(format = format_dates$DateOnly)
     enddates <- zero_curtain() %>% 
       select({pltvar}) %>% 
-      mutate(across(everything(), as.Date)) %>%
       rownames_to_column(var = "rname") %>% 
       filter(str_detect(rname, "end")) %>% 
       column_to_rownames(var = "rname") %>%
-      as.vector %>% unname  %>% unlist %>% as.Date
+      as.vector %>% unname  %>% unlist %>% as.Date(format = format_dates$DateOnly)
     stopifnot("Number of start and end dates must be equal." = all.equal(length(startdates), length(enddates)))
     
     par(mfrow = c(1,1), mar = c(2,4,2,4))
@@ -989,7 +1062,7 @@ server <- function(input, output, session, environment) {
     axis.Date(side   = 1, 
               x      = index(site_zoo), 
               at     = major, 
-              labels = format(major, format = "%Y-%m"))
+              labels = format(major, format = format_dates$MonthOnly))
     # Minor ticks
     minor <- index(site_zoo[!site_zoo %in% major]) %>% trunc("month")
     axis.Date(side   = 1, 
@@ -1060,14 +1133,14 @@ server <- function(input, output, session, environment) {
            "No zero curtains could be identified.")
     )
 
-    zc_start <- zero_curtain()[paste0(input$weqt_yr, " ZC start"), input$param_variable] %>% as.Date # Find ZC start
+    zc_start <- zero_curtain()[paste0(input$weqt_yr, " ZC start"), input$param_variable] %>% as.Date(format = format_dates$DateOnly) # Find ZC start
     weqt_start <- zc_start - input$weqt_before # Find WEqT start from input and ZC start
     weqt_end <- weqt_start + input$weqt_duration
     WEqT <- daily()[, input$param_variable] %>%
       window(start = weqt_start, end = weqt_end) %>%
       mean
-    data.frame(Start = weqt_start,
-               End   = weqt_end,
+    data.frame(Start = format(weqt_start, format_dates$DateOnly),
+               End   = format(weqt_end, format_dates$DateOnly),
                WEqT  = WEqT)
   })
 
@@ -1095,9 +1168,9 @@ server <- function(input, output, session, environment) {
          ylab     = "GST [°C]")
 
     # Rectangle to show selected dates
-    rect(xleft   = weqt()$Start,
+    rect(xleft   = as.Date(weqt()$Start, format = format_dates$DateOnly),
          ybottom = par("usr")[3],
-         xright  = weqt()$End,
+         xright  = as.Date(weqt()$End, format = format_dates$DateOnly),
          ytop    = par("usr")[4],
          col     = rgb(0.9, 0.2, 0.2, alpha = 0.2),
          border  = NA)
@@ -1138,9 +1211,10 @@ server <- function(input, output, session, environment) {
     )
   })
   
-  # Mean over entire timespan
+  # Mean over hydrological year
   yearly <- reactive({
-    yly <- site$data 
+    req(full_days())
+    yly <- full_days()
     wyear <- water_year(index(yly), # Compute hydrological year 
                          origin = wyear_origin(), 
                          as.POSIX = TRUE) %>% 
@@ -1149,7 +1223,8 @@ server <- function(input, output, session, environment) {
     yly_df <- data.frame(DateTime = index(yly), coredata(yly), check.names = FALSE)
     yly_df <- yly_df %>%
       group_by(wyear) %>%
-      filter(length(unique(as.Date(DateTime))) >= 364) %>%
+      filter(length(unique(as.Date(DateTime))) == 365 | # Check again if year is complete
+               (length(unique(as.Date(DateTime))) == 366 & any(lubridate::leap_year(DateTime)))) %>% # Cater for leap years (unlike full_months)
       summarise(across(-DateTime, mean)) %>%
       round(digits = 2) %>%
       ungroup %>%
@@ -1180,7 +1255,9 @@ server <- function(input, output, session, environment) {
       paste(tools::file_path_sans_ext(basename(input$fname$name)), "_daily.csv", sep = "")
     },
     content = function(file) {
-      write.csv(as.data.frame(daily(), check.names = FALSE), file)
+      dly_for_dl <- daily() %>% as.data.frame(check.names = FALSE)
+      rownames(dly_for_dl) <- index(daily()) %>% format(format_dates$DateOnly)
+      write.csv(as.data.frame(dly_for_dl, check.names = FALSE), file)
     },
     contentType = "text/csv"
   )
